@@ -1,0 +1,34 @@
+# docker-compose.override.yml — dev-расширения, применяются автоматически
+# поверх docker-compose.yml при локальном `make up`
+
+services:
+
+  postgres:
+    ports:
+      - "5432:5432"   # открываем порт для подключения GUI-клиентов (pgAdmin, DBeaver)
+
+  datavault:
+    environment:
+      DATAVAULT_LOG_LEVEL: debug
+
+  # ── pgAdmin — веб-интерфейс к PostgreSQL ────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@local.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ../docker/pgadmin-servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - datavault
+
+volumes:
+  pgadmin_data:

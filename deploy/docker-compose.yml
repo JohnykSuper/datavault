@@ -1,0 +1,80 @@
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-datavault}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+      POSTGRES_DB: ${POSTGRES_DB:-datavault}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-datavault}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - datavault
+
+  # ── Database migrations ───────────────────────────────────────────────────
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-secret}
+    volumes:
+      - ../migrations/postgres:/migrations:ro
+    entrypoint: ["psql"]
+    command:
+      - "-h"
+      - "postgres"
+      - "-U"
+      - "${POSTGRES_USER:-datavault}"
+      - "-d"
+      - "${POSTGRES_DB:-datavault}"
+      - "-f"
+      - "/migrations/001_init.sql"
+    restart: on-failure
+    networks:
+      - datavault
+
+  # ── DataVault service ─────────────────────────────────────────────────────
+  datavault:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATAVAULT_APP_PORT: ${DATAVAULT_APP_PORT:-8080}
+      DATAVAULT_ENV: ${DATAVAULT_ENV:-dev}
+      DATAVAULT_DB_DRIVER: postgres
+      DATAVAULT_DB_DSN: postgres://${POSTGRES_USER:-datavault}:${POSTGRES_PASSWORD:-secret}@postgres:5432/${POSTGRES_DB:-datavault}?sslmode=disable
+      DATAVAULT_HSM_MODE: ${DATAVAULT_HSM_MODE:-stub}
+      DATAVAULT_SEARCH_KEY: ${DATAVAULT_SEARCH_KEY}
+      DATAVAULT_DEK_CACHE_TTL: ${DATAVAULT_DEK_CACHE_TTL:-5m}
+      DATAVAULT_LOG_LEVEL: ${DATAVAULT_LOG_LEVEL:-info}
+      DATAVAULT_API_KEY: ${DATAVAULT_API_KEY}
+    ports:
+      - "${HOST_PORT:-8081}:${DATAVAULT_APP_PORT:-8080}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${DATAVAULT_APP_PORT:-8080}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - datavault
+
+volumes:
+  postgres_data:
+
+networks:
+  datavault:
+    driver: bridge

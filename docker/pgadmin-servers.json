@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "DataVault (local)",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "datavault",
+      "Username": "datavault",
+      "SSLMode": "prefer"
+    }
+  }
+}

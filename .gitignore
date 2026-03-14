@@ -1,0 +1,43 @@
+# ── Secrets and local config ───────────────────────────────────────────────
+# .env contains real keys, passwords, and DSNs — never commit it.
+# Use .env.example as the committed template.
+.env
+
+# ── Build output ───────────────────────────────────────────────────────────
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# ── Go test / coverage artifacts ──────────────────────────────────────────
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# ── IDE and editor files ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS generated files ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Docker volumes and temporary data ────────────────────────────────────
+docker/pgadmin-data/
+
+# ── Go workspace and module cache ─────────────────────────────────────────
+# vendor/ is committed intentionally (-mod=vendor), do not gitignore it.
+*.mod.bak
+
+# ── Miscellaneous ─────────────────────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx

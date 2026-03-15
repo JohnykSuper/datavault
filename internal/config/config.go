@@ -44,6 +44,14 @@ type Config struct {
 	// DEK cache
 	DEKCacheTTL time.Duration
 
+	// Database connection pool — applied to all DB drivers.
+	// See DATAVAULT_DB_* env vars.
+	DBMaxConns          int           // max open connections (default 20)
+	DBMinConns          int           // min idle connections / pgx MinConns (default 2)
+	DBConnMaxLifetime   time.Duration // rotate connections after this age (default 30m)
+	DBConnMaxIdleTime   time.Duration // release idle connections after this age (default 5m)
+	DBHealthCheckPeriod time.Duration // pgx only: ping idle conns at this interval (default 1m)
+
 	// Logging
 	LogLevel string
 
@@ -69,24 +77,35 @@ func Load() *Config {
 	httpPort, _ := strconv.Atoi(getEnvOrDefault("DATAVAULT_APP_PORT", "8080"))
 	mssqlPort, _ := strconv.Atoi(getEnvOrDefault("DATAVAULT_MSSQL_PORT", "1433"))
 
+	dbMaxConns, _ := strconv.Atoi(getEnvOrDefault("DATAVAULT_DB_MAX_CONNS", "20"))
+	dbMinConns, _ := strconv.Atoi(getEnvOrDefault("DATAVAULT_DB_MIN_CONNS", "2"))
+	dbConnMaxLifetime := parseDurationOrDefault("DATAVAULT_DB_CONN_MAX_LIFETIME", 30*time.Minute)
+	dbConnMaxIdleTime := parseDurationOrDefault("DATAVAULT_DB_CONN_MAX_IDLE_TIME", 5*time.Minute)
+	dbHealthCheckPeriod := parseDurationOrDefault("DATAVAULT_DB_HEALTH_CHECK_PERIOD", 1*time.Minute)
+
 	return &Config{
-		HTTPPort:    httpPort,
-		Env:         getEnvOrDefault("DATAVAULT_ENV", "dev"),
-		DBDriver:    getEnvOrDefault("DATAVAULT_DB_DRIVER", "postgres"),
-		DatabaseURL: os.Getenv("DATAVAULT_DB_DSN"),
-		MSSQLHost:   os.Getenv("DATAVAULT_MSSQL_HOST"),
-		MSSQLPort:   mssqlPort,
-		MSSQLUser:   os.Getenv("DATAVAULT_MSSQL_USER"),
-		MSSQLPass:   os.Getenv("DATAVAULT_MSSQL_PASS"),
-		MSSQLDB:     os.Getenv("DATAVAULT_MSSQL_DB"),
-		OracleDSN:   os.Getenv("DATAVAULT_ORACLE_DSN"),
-		OracleUser:  os.Getenv("DATAVAULT_ORACLE_USER"),
-		OraclePass:  os.Getenv("DATAVAULT_ORACLE_PASS"),
-		HSMMode:     getEnvOrDefault("DATAVAULT_HSM_MODE", "stub"),
-		HMACKey:     searchKey,
-		DEKCacheTTL: ttl,
-		LogLevel:    getEnvOrDefault("DATAVAULT_LOG_LEVEL", "info"),
-		APIKey:      requireEnv("DATAVAULT_API_KEY"),
+		HTTPPort:            httpPort,
+		Env:                 getEnvOrDefault("DATAVAULT_ENV", "dev"),
+		DBDriver:            getEnvOrDefault("DATAVAULT_DB_DRIVER", "postgres"),
+		DatabaseURL:         os.Getenv("DATAVAULT_DB_DSN"),
+		MSSQLHost:           os.Getenv("DATAVAULT_MSSQL_HOST"),
+		MSSQLPort:           mssqlPort,
+		MSSQLUser:           os.Getenv("DATAVAULT_MSSQL_USER"),
+		MSSQLPass:           os.Getenv("DATAVAULT_MSSQL_PASS"),
+		MSSQLDB:             os.Getenv("DATAVAULT_MSSQL_DB"),
+		OracleDSN:           os.Getenv("DATAVAULT_ORACLE_DSN"),
+		OracleUser:          os.Getenv("DATAVAULT_ORACLE_USER"),
+		OraclePass:          os.Getenv("DATAVAULT_ORACLE_PASS"),
+		HSMMode:             getEnvOrDefault("DATAVAULT_HSM_MODE", "stub"),
+		HMACKey:             searchKey,
+		DEKCacheTTL:         ttl,
+		DBMaxConns:          dbMaxConns,
+		DBMinConns:          dbMinConns,
+		DBConnMaxLifetime:   dbConnMaxLifetime,
+		DBConnMaxIdleTime:   dbConnMaxIdleTime,
+		DBHealthCheckPeriod: dbHealthCheckPeriod,
+		LogLevel:            getEnvOrDefault("DATAVAULT_LOG_LEVEL", "info"),
+		APIKey:              requireEnv("DATAVAULT_API_KEY"),
 	}
 }
 
@@ -108,4 +127,16 @@ func getEnvOrDefault(key, def string) string {
 func fatalf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "config: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+func parseDurationOrDefault(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		fatalf("invalid %s: %v", key, err)
+	}
+	return d
 }

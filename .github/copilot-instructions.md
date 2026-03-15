@@ -64,6 +64,10 @@ All app variables use the `DATAVAULT_` prefix per naming convention:
 `DATAVAULT_APP_PORT`, `DATAVAULT_DB_DRIVER`, `DATAVAULT_DB_DSN`, `DATAVAULT_HSM_MODE`,  
 `DATAVAULT_SEARCH_KEY`, `DATAVAULT_DEK_CACHE_TTL`, `DATAVAULT_LOG_LEVEL`, `DATAVAULT_API_KEY`, `DATAVAULT_ENV`.
 
+Database connection pool (all drivers, see `.env.example` for defaults):  
+`DATAVAULT_DB_MAX_CONNS`, `DATAVAULT_DB_MIN_CONNS`, `DATAVAULT_DB_CONN_MAX_LIFETIME`,  
+`DATAVAULT_DB_CONN_MAX_IDLE_TIME`, `DATAVAULT_DB_HEALTH_CHECK_PERIOD` (pgx only).
+
 ### Production Safety
 `DATAVAULT_HSM_MODE=stub` is **fatal** when `DATAVAULT_ENV=prod`. There is no silent fallback to stub mode.
 

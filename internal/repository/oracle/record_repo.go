@@ -7,7 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	_ "github.com/sijms/go-ora/v2"
 	"github.com/your-org/datavault/internal/config"
@@ -18,17 +17,17 @@ import (
 // New opens a sql.DB pool for Oracle and returns record + audit repositories.
 // DSN format: oracle://user:pass@host:port/service
 //
-// Pool settings mirror those of the Postgres adapter.
+// Pool parameters are read from config (DATAVAULT_DB_* env vars).
 func New(cfg *config.Config) (port.RecordRepository, port.AuditRepository, error) {
 	dsn := fmt.Sprintf("oracle://%s:%s@%s", cfg.OracleUser, cfg.OraclePass, cfg.OracleDSN)
 	db, err := sql.Open("oracle", dsn)
 	if err != nil {
 		return nil, nil, err
 	}
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(30 * time.Minute)
-	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetMaxOpenConns(cfg.DBMaxConns)
+	db.SetMaxIdleConns(cfg.DBMinConns)
+	db.SetConnMaxLifetime(cfg.DBConnMaxLifetime)
+	db.SetConnMaxIdleTime(cfg.DBConnMaxIdleTime)
 	if err := db.PingContext(context.Background()); err != nil {
 		return nil, nil, fmt.Errorf("oracle ping: %w", err)
 	}

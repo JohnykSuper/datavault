@@ -7,6 +7,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Changed
+- `/health` now returns `version` and `time` (RFC 3339 UTC) in addition to `status`
+- `/ready` now checks both DB and HSM connectivity and returns a `components` map  
+  with per-component `status`/`detail`; timeout increased from 3 s to 5 s
+- `GET /health` and `GET /ready` responses are JSON objects (was plain `{"status":"…"}`)
+- Database connection pool parameters are now fully configurable via env vars  
+  (`DATAVAULT_DB_MAX_CONNS`, `DATAVAULT_DB_MIN_CONNS`, `DATAVAULT_DB_CONN_MAX_LIFETIME`,  
+  `DATAVAULT_DB_CONN_MAX_IDLE_TIME`, `DATAVAULT_DB_HEALTH_CHECK_PERIOD`)
+- Build embeds git tag as version string via ldflags  
+  (`-X github.com/your-org/datavault/internal/version.Version=<tag>`)
+
+### Added
+- `internal/version` package — single source of truth for the build version
+- `port.HSM.Ping(ctx)` method — HSM liveness used by `/ready`
+
+---
+
 ## [v0.1.0] — 2026-03-15
 
 Initial release of DataVault — a production-grade Go service for secure data

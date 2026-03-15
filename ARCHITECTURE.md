@@ -112,8 +112,7 @@ Endpoints:
 - POST /v1/decrypt
 - GET /v1/search
 - POST /v1/rewrap-dek
-- GET /health
-- GET /ready
+- GET /health  — unified probe: liveness + readiness + HSM telemetry; 503 when any component is down
 
 ---
 
@@ -151,17 +150,16 @@ Crypto layer must not:
 ## 4.4 HSM Adapter Layer
 
 Responsibilities:
-- Provide abstract interface:
-  - CurrentKEK()
-  - WrapKey()
-  - UnwrapKey()
-  - SearchKey()
+- Provide two complementary interfaces:
+  - `port.HSM` — crypto operations: `WrapDEK`, `UnwrapDEK`, `CurrentKeyVersion`, `Ping`
+  - `port.HSMMonitor` — telemetry: `NodeInfo`, `ClusterInfo`, `LogCount`, `Date`, `Battery`, `NTPStatus`, `ActiveKeys`
+- `hsm.FullClient` embeds both; `hsm.New(cfg)` always returns a `FullClient`
 - Implementations:
-  - Mock (dev only)
-  - PKCS#11 adapter
-  - Vendor SDK adapter
+  - `Stub` — in-process, dev/test only (`DATAVAULT_HSM_MODE=stub`)
+  - `CertexREST` — CERTEX HSM ES REST adapter (`DATAVAULT_HSM_MODE=certex`); monitoring implemented; crypto ops pending vendor documentation
+  - PKCS#11 adapter (`DATAVAULT_HSM_MODE=pkcs11`) — TODO
 
-Business logic must depend only on the interface.
+Business logic must depend only on the interfaces, not on concrete adapter types.
 
 ---
 
@@ -226,13 +224,19 @@ Key metrics:
 Configuration via environment variables.
 
 Examples:
+- DATAVAULT_APP_PORT
+- DATAVAULT_ENV
 - DATAVAULT_DB_DRIVER
 - DATAVAULT_DB_DSN
 - DATAVAULT_HSM_MODE
+- DATAVAULT_HSM_URL / DATAVAULT_HSM_USER / DATAVAULT_HSM_PASS
+- DATAVAULT_SEARCH_KEY
+- DATAVAULT_API_KEY
 - DATAVAULT_DEK_CACHE_TTL
-- DATAVAULT_REQUEST_TIMEOUT
+- DATAVAULT_LOG_LEVEL
+- DATAVAULT_DB_MAX_CONNS / DATAVAULT_DB_MIN_CONNS
 
-Config validated at startup.
+Config validated at startup. Missing required values are fatal.
 
 ---
 
@@ -322,7 +326,7 @@ Used rarely.
 In-memory only.
 TTL-based.
 Keyed by:
-- hash(kek_id + wrapped_dek)
+- tenantID + keyVersion
 
 Purpose:
 - Reduce HSM calls

@@ -24,14 +24,16 @@ func (p *PKCS11) CurrentKeyVersion(_ context.Context, _ string) (int, error) {
 	return 0, fmt.Errorf("PKCS11: not implemented — see internal/hsm/pkcs11.go")
 }
 
-func (p *PKCS11) WrapDEK(_ context.Context, _, _ string, _, _ []byte) ([]byte, error) {
-	// TODO: C_WrapKey with CKM_AES_KEY_WRAP
+func (p *PKCS11) WrapDEK(_ context.Context, _ string, _ int, _ []byte) ([]byte, error) {
+	// TODO: C_WrapKey with a vendor-confirmed GOST-compatible mechanism
+	// (e.g. CKM_GOST28147_KEY_WRAP or vendor-defined). Do not use CKM_AES_KEY_WRAP
+	// in GOST mode. Confirm exact mechanism from vendor PKCS#11 documentation.
 	return nil, fmt.Errorf("PKCS11: not implemented")
 }
 
 // Note: method signature must match port.HSM interface exactly.
 func (p *PKCS11) UnwrapDEK(_ context.Context, _ string, _ int, _ []byte) ([]byte, error) {
-	// TODO: C_UnwrapKey with CKM_AES_KEY_WRAP
+	// TODO: C_UnwrapKey with the same vendor-confirmed GOST-compatible mechanism.
 	return nil, fmt.Errorf("PKCS11: not implemented")
 }
 

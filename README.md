@@ -19,9 +19,9 @@ It provides centralized encryption, decryption, and search-token capabilities us
   - PostgreSQL
 - Versioned key management
 - Rewrap support for KEK rotation
-- In-memory DEK cache
+- In-memory DEK cache with TTL and on-evict zeroization
 - Structured audit logging
-- Health and readiness endpoints
+- Unified health endpoint with full HSM telemetry (`GET /health`)
 
 ---
 
@@ -73,12 +73,18 @@ Stored only in wrapped form.
 
 ## API
 
-POST /v1/encrypt  
-POST /v1/decrypt  
-GET /v1/search  
-POST /v1/rewrap-dek  
-GET /health  
-GET /ready  
+All `/v1/*` routes require `Authorization: Bearer <DATAVAULT_API_KEY>`.
+
+```
+POST /v1/encrypt
+POST /v1/decrypt
+GET  /v1/search
+POST /v1/rewrap-dek
+GET  /health        — 200 ok (all components healthy) | 503 error (any component down)
+```
+
+The `/health` response includes service info, runtime metrics, memory stats,
+DB latency, and full HSM telemetry (node counters, sync state, battery, NTP status).
 
 ---
 
@@ -95,15 +101,24 @@ GET /ready
 
 ## Configuration
 
-Configured via environment variables:
+Configured via environment variables (all prefixed `DATAVAULT_`):
 
-- DB_DRIVER
-- DB_DSN
-- HSM_MODE
-- DEK_CACHE_TTL
-- LOG_LEVEL
-- REQUEST_TIMEOUT
-- APP_PORT
+```
+DATAVAULT_APP_PORT          # HTTP listen port (default 8080)
+DATAVAULT_ENV               # dev | test | prod
+DATAVAULT_DB_DRIVER         # postgres | mssql | oracle
+DATAVAULT_DB_DSN            # connection string (postgres)
+DATAVAULT_HSM_MODE          # stub | certex | pkcs11
+DATAVAULT_HSM_URL           # CERTEX HSM ES base URL (certex mode)
+DATAVAULT_HSM_USER          # HSM Basic-auth username (certex mode)
+DATAVAULT_HSM_PASS          # HSM Basic-auth password (certex mode)
+DATAVAULT_SEARCH_KEY        # 64-char hex, 32-byte HMAC key
+DATAVAULT_API_KEY           # Bearer token for /v1/* routes
+DATAVAULT_DEK_CACHE_TTL     # e.g. 5m
+DATAVAULT_LOG_LEVEL         # debug | info | warn | error
+```
+
+See `.env.example` for all options including DB pool settings.
 
 ---
 

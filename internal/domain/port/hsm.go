@@ -18,6 +18,6 @@ type HSM interface {
 	CurrentKeyVersion(ctx context.Context, tenantID string) (int, error)
 
 	// Ping verifies that the HSM is reachable and operational.
-	// Used by the readiness probe.
+	// Used by the health probe (GET /health).
 	Ping(ctx context.Context) error
 }

@@ -80,7 +80,6 @@ Examples:
 - /v1/search
 - /v1/rewrap-dek
 - /health
-- /ready
 - /metrics
 
 ## Environment Variables

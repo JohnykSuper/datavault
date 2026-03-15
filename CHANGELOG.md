@@ -9,20 +9,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-### Changed
-- `/health` now returns `version` and `time` (RFC 3339 UTC) in addition to `status`
-- `/ready` now checks both DB and HSM connectivity and returns a `components` map  
-  with per-component `status`/`detail`; timeout increased from 3 s to 5 s
-- `GET /health` and `GET /ready` responses are JSON objects (was plain `{"status":"…"}`)
-- Database connection pool parameters are now fully configurable via env vars  
-  (`DATAVAULT_DB_MAX_CONNS`, `DATAVAULT_DB_MIN_CONNS`, `DATAVAULT_DB_CONN_MAX_LIFETIME`,  
-  `DATAVAULT_DB_CONN_MAX_IDLE_TIME`, `DATAVAULT_DB_HEALTH_CHECK_PERIOD`)
+### Added
+- `internal/version` package — single source of truth for the build version
+- `port.HSMMonitor` interface — `NodeInfo`, `ClusterInfo`, `LogCount`, `Date`, `Battery`, `NTPStatus`, `ActiveKeys`; matching data types: `HSMNodeInfo`, `HSMSyncInfo`, `HSMClusterNode`, `HSMBattery`, `HSMLogCount`
+- `internal/hsm/certex_rest.go` — CERTEX HSM ES REST adapter (`DATAVAULT_HSM_MODE=certex`); all 9 documented monitoring endpoints fully implemented; crypto ops return `not implemented` pending verified vendor documentation
+- `hsm.FullClient` composite interface — embeds `port.HSM` + `port.HSMMonitor`; returned by `hsm.New()`
+- `internal/health` package — `Collector` type gathers DB latency, all HSM telemetry calls, runtime metrics, and DEK cache stats in one shot
+- `DATAVAULT_HSM_URL`, `DATAVAULT_HSM_USER`, `DATAVAULT_HSM_PASS` environment variables for certex mode
+- `cache.DEKCache.ItemCount()` and `CacheTTL()` methods for health reporting
+- Database connection pool parameters configurable via env vars  
+  `DATAVAULT_DB_MAX_CONNS`, `DATAVAULT_DB_MIN_CONNS`, `DATAVAULT_DB_CONN_MAX_LIFETIME`,  
+  `DATAVAULT_DB_CONN_MAX_IDLE_TIME`, `DATAVAULT_DB_HEALTH_CHECK_PERIOD`
+- `port.HSM.Ping(ctx)` method on all HSM adapters
 - Build embeds git tag as version string via ldflags  
   (`-X github.com/your-org/datavault/internal/version.Version=<tag>`)
 
-### Added
-- `internal/version` package — single source of truth for the build version
-- `port.HSM.Ping(ctx)` method — HSM liveness used by `/ready`
+### Changed
+- **`GET /health` is the single unified probe** — `/ready` removed; `/health` returns  
+  `200 ok` when all components (DB + HSM) are healthy, `503 error` when any component fails
+- `/health` response expanded to include: `version`, `time`, `uptime`, `service`, `runtime`,  
+  `memory`, and `components` (db, hsm with full telemetry, dek_cache)
+- HSM telemetry failures populate `components.hsm.errors[]` and do NOT mark HSM as down
+- `hsm.New()` returns `hsm.FullClient` instead of `port.HSM`; adds `certex` to supported modes
+- `DATAVAULT_HSM_MODE=stub` error message updated to list all valid production modes
+
+### Removed
+- `GET /ready` endpoint (functionality merged into `GET /health`)
 
 ---
 

@@ -29,14 +29,13 @@ Goal: Working secure prototype with one database and mock HSM.
 - DEK generation
 - Search token implementation
 - HSM interface
-- Mock HSM implementation
+- Stub HSM implementation (in-process, dev/test only)
 - Service layer
 - HTTP API:
   - /v1/encrypt
   - /v1/decrypt
   - /v1/search
   - /health
-  - /ready
 - PostgreSQL repository implementation
 - Basic migrations for PostgreSQL
 - Structured logging
@@ -83,17 +82,17 @@ Goal: Full multi-DB compatibility.
 
 # Phase 2 — Real HSM Integration (v0.3.0)
 
-Goal: Replace mock HSM with real secure adapter.
+Goal: Replace stub HSM with real secure adapters.
 
 ## Scope
 
+- CERTEX HSM ES REST adapter (monitoring endpoints: implemented ✅)
+- CERTEX HSM ES crypto operations (WrapDEK/UnwrapDEK: pending verified vendor documentation)
 - PKCS#11 adapter
-- Vendor SDK adapter (optional)
 - HSM connection pool management
 - HSM timeout handling
 - Retry policy
-- HSM health check integration
-- Disable mock HSM in production mode
+- Disable stub HSM in production mode (implemented ✅)
 - Secure secret injection handling
 
 ## Validation

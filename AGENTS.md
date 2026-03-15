@@ -31,7 +31,7 @@ DataVault is a secure data encryption and key management service for a certifica
 - Decrypt payload
 - Search by token
 - Rewrap DEK
-- Health and readiness endpoints
+- Unified health endpoint (`GET /health`)
 - Audit logging
 - Config via environment variables
 - In-memory DEK cache with TTL

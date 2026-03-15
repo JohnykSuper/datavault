@@ -431,8 +431,8 @@ DataVault does not aim to provide:
 - logging plaintext
 - logging DEK or search key
 - storing secrets in source code
-- production use of mock HSM
-- silent fallback from real HSM to mock mode
+- production use of stub HSM (`DATAVAULT_HSM_MODE=stub`)
+- silent fallback from real HSM to stub mode
 - security-relevant TODOs left unresolved for production release
 
 ---

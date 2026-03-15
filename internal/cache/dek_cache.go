@@ -59,3 +59,14 @@ func (d *DEKCache) Delete(tenantID string, keyVersion int) {
 	}
 	d.c.Delete(key)
 }
+
+// ItemCount returns the number of DEKs currently held in the cache
+// (including items that have not yet been cleaned up).
+func (d *DEKCache) ItemCount() int {
+	return d.c.ItemCount()
+}
+
+// CacheTTL returns the configured Time-To-Live for cache entries.
+func (d *DEKCache) CacheTTL() time.Duration {
+	return d.ttl
+}

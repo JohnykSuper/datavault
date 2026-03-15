@@ -79,10 +79,17 @@ Database connection pool (all drivers, see `.env.example` for defaults):
 | Nonce | 12 bytes, random per record |
 | Auth tag | 16 bytes |
 | AAD | mandatory on every encrypt/decrypt call |
-| DEK wrap | RFC 3394 AES Key Wrap (stub) / `CKM_AES_KEY_WRAP` (PKCS#11) |
+| DEK wrap | Development stub only; production mechanism depends on verified HSM integration |
 | Search token | HMAC-SHA256, hex-encoded, derived from `DATAVAULT_SEARCH_KEY` |
 
 No custom crypto. Use only Go standard library primitives (`crypto/aes`, `crypto/hmac`, `crypto/sha256`).
+Production DEK wrap/unwrap must not be implemented from guesswork.
+Use only:
+- separately verified PKCS#11 documentation, or
+- separately verified vendor SDK documentation, or
+- separately verified CERTEX HSM ES crypto REST documentation
+
+If verified crypto-wrap documentation is unavailable, keep production crypto-HSM integration marked as unsupported/TODO rather than fabricating it.
 
 ## Database Schema
 
@@ -160,7 +167,29 @@ Handlers must stay thin: decode → call `svc.Method(ctx, Request{...})` → enc
 Never store the plaintext search value. Derive: `crypto.HMACSha256Token(cfg.HMACKey, []byte(value))` — env var `DATAVAULT_SEARCH_KEY`. Only the hex token hits the DB.
 
 ### HSM Integration Point
-`internal/hsm/pkcs11.go` is the production TODO. Key label convention: `datavault-kek-{tenantID}-v{keyVersion}`. Use `C_WrapKey`/`C_UnwrapKey` with `CKM_AES_KEY_WRAP`.
+
+DataVault must support HSM integration through an abstract interface. Do not hardcode PKCS#11 as the only production path.
+
+For CERTEX HSM ES, the currently verified integration surface from the available vendor document is an HTTPS REST API with:
+- Basic HTTP authorization
+- JSON request/response format
+- HTTP POST requests
+
+Do not assume PKCS#11, `C_WrapKey`, `C_UnwrapKey`, `CKM_AES_KEY_WRAP`, or any cryptographic key-wrap endpoint unless a separate verified vendor document explicitly confirms them.
+
+Implement HSM adapters as separate production-capable integrations:
+
+- `internal/hsm/stub.go` — local development only
+- `internal/hsm/certex_rest.go` — CERTEX HSM ES REST adapter for verified monitoring/service endpoints
+- `internal/hsm/pkcs11.go` — optional adapter, only if PKCS#11 support is separately confirmed
+- `internal/hsm/vendor_sdk.go` — optional adapter, only if vendor SDK is separately confirmed
+
+The HSM interface must be split into capability-oriented interfaces, for example:
+- `HSMHealthClient`
+- `HSMCryptoClient`
+- `HSMKeyLookupClient`
+
+If a capability is not confirmed by vendor documentation, do not invent methods or fake production implementations.
 
 ### Logging Rules
 - Use `log.Info/Error/Warn/Debug("message", "key", value, ...)` (key-value pairs)  
@@ -177,6 +206,10 @@ Never store the plaintext search value. Derive: `crypto.HMACSha256Token(cfg.HMAC
 - Use Go standard library where possible; minimise external dependencies  
 - Use context timeouts on all DB and HSM calls  
 - Service must remain stateless — no in-process mutable state except the DEK cache  
+- Do not invent undocumented HSM endpoints or undocumented PKCS#11 capabilities
+- For CERTEX HSM ES, only use vendor-documented REST endpoints that are explicitly confirmed
+- Keep operational HSM monitoring separate from cryptographic HSM key operations
+- If vendor documentation confirms only monitoring endpoints, implement only monitoring endpoints
 
 ## Non-Functional Requirements
 - Stateless service; horizontally scalable  
@@ -191,4 +224,94 @@ Never store the plaintext search value. Derive: `crypto.HMACSha256Token(cfg.HMAC
 2. Implement `port.RecordRepository` and `port.AuditRepository`  
 3. Add a case in `internal/repository/factory.go`  
 4. Add a migration in `migrations/<driver>/001_init.sql`  
-5. Add a `migrate-<driver>` target in `Makefile`  
+5. Add a `migrate-<driver>` target in `Makefile`
+
+### CERTEX HSM ES Verified API Surface
+
+According to the currently available CERTEX HSM ES vendor API document, the verified API surface is REST-based and includes operational/service endpoints such as:
+
+- `POST /clear`
+- `POST /info`
+- `POST /infocluster`
+- `POST /infogen`
+- `POST /infolog`
+- `POST /findkey/{name}`
+- `POST /logcount`
+- `POST /date`
+- `POST /battery`
+- `POST /updatetime`
+
+These endpoints are suitable for:
+- health checks
+- readiness checks
+- node diagnostics
+- cluster diagnostics
+- synchronization status
+- battery state monitoring
+- time/NTP monitoring
+- key lookup by name
+
+These endpoints are **not sufficient evidence** of payload-encryption or DEK wrap/unwrap operations.
+
+Therefore:
+- use CERTEX HSM ES REST API for operational monitoring where applicable
+- do not implement DEK wrap/unwrap through guessed REST endpoints
+- keep cryptographic HSM operations behind an interface until the vendor provides verified crypto operation documentation
+
+### Readiness and HSM Monitoring Rules
+
+For CERTEX HSM ES deployments, `/ready` may include:
+- REST connectivity check to HSM
+- successful Basic Auth validation
+- `POST /info` node status check
+- optional `POST /battery` check
+- optional `POST /date` check
+- optional `POST /infocluster` cluster visibility check
+
+Recommended health mapping:
+- `/health` => application liveness only
+- `/ready` => DB readiness + HSM connectivity + HSM node status
+
+Expose vendor-derived operational metrics where possible:
+- HSM node id
+- key count
+- tasksQueue
+- tasksQueueNet
+- FKeyGenTotal / FKeyGenError / FKeyGenTime
+- FKeySignTotal / FKeySignError / FKeySignTime
+- syncProcess
+- syncTime
+- battery voltage
+- need_replace
+
+### CERTEX REST Adapter Rules
+
+If implementing `internal/hsm/certex_rest.go`:
+
+- use HTTPS only
+- use Basic HTTP authorization
+- use POST requests for documented endpoints
+- use explicit request timeout
+- never log Authorization header or credentials
+- parse vendor JSON responses into typed DTOs
+- map vendor response fields into internal health/metrics models
+- keep all vendor-specific DTOs inside the HSM adapter package
+- do not leak vendor field names into domain service logic unless deliberately normalized
+
+Suggested internal methods for the REST adapter:
+- `Ping(ctx context.Context) error`
+- `NodeInfo(ctx context.Context) (NodeInfo, error)`
+- `ClusterInfo(ctx context.Context) ([]ClusterNodeInfo, error)`
+- `LogInfo(ctx context.Context) (LogInfo, error)`
+- `LogCount(ctx context.Context) (LogCountInfo, error)`
+- `Battery(ctx context.Context) (BatteryInfo, error)`
+- `Date(ctx context.Context) (time.Time, error)`
+- `UpdateTime(ctx context.Context) error`
+- `FindKey(ctx context.Context, name string) (KeyLookupResult, error)`
+
+Do not add:
+- `WrapDEK`
+- `UnwrapDEK`
+- `GenerateKEK`
+- `GenerateDEK`
+unless these operations are explicitly documented by the vendor.

@@ -15,6 +15,7 @@ import (
 	"github.com/your-org/datavault/internal/cache"
 	"github.com/your-org/datavault/internal/config"
 	"github.com/your-org/datavault/internal/domain/service"
+	"github.com/your-org/datavault/internal/health"
 	"github.com/your-org/datavault/internal/hsm"
 	"github.com/your-org/datavault/internal/logger"
 	"github.com/your-org/datavault/internal/repository"
@@ -51,7 +52,9 @@ func main() {
 		log.Fatal("failed to init key validator", "error", err)
 	}
 
-	router := api.NewRouter(svc, log, repos.Pinger, hsmClient, keyValidator)
+	collector := health.New(cfg, repos.Pinger, hsmClient, dekCache)
+
+	router := api.NewRouter(svc, log, collector, keyValidator)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),

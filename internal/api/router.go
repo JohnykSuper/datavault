@@ -10,11 +10,12 @@ import (
 	"github.com/your-org/datavault/internal/api/middleware"
 	"github.com/your-org/datavault/internal/domain/port"
 	"github.com/your-org/datavault/internal/domain/service"
+	"github.com/your-org/datavault/internal/health"
 	"github.com/your-org/datavault/internal/logger"
 )
 
 // NewRouter builds and returns the fully-configured chi router.
-func NewRouter(svc *service.Service, log *logger.Logger, dbPinger port.Pinger, hsmPinger port.Pinger, keyValidator port.KeyValidator) http.Handler {
+func NewRouter(svc *service.Service, log *logger.Logger, collector *health.Collector, keyValidator port.KeyValidator) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -24,8 +25,8 @@ func NewRouter(svc *service.Service, log *logger.Logger, dbPinger port.Pinger, h
 	r.Use(middleware.StructuredLogger(log))
 
 	// Health / readiness (no auth required)
-	r.Get("/health", handler.Health())
-	r.Get("/ready", handler.Ready(dbPinger, hsmPinger))
+	r.Get("/health", handler.Health(collector))
+	r.Get("/ready", handler.Ready(collector))
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {

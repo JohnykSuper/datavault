@@ -8,7 +8,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS=-ldflags "-X github.com/your-org/datavault/internal/version.Version=$(VERSION)"
 
 build:
-	go build -mod=vendor $(LDFLAGS) -o $(BINARY) $(MAIN)
+	go build $(LDFLAGS) -o $(BINARY) $(MAIN)
 
 test:
 	go test ./... -v -count=1
@@ -44,4 +44,4 @@ ps:
 	$(COMPOSE) ps
 
 tidy:
-	go mod tidy ; go mod vendor
+	go mod tidy ; go mod vendor  # vendor/ is local-only (gitignored); Docker uses go mod download

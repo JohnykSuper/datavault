@@ -32,15 +32,8 @@ Thumbs.db
 docker/pgadmin-data/
 
 # ── Go workspace and module cache ─────────────────────────────────────────
-# vendor/ is committed intentionally (-mod=vendor), do not gitignore it.
 *.mod.bak
 
-# ── Miscellaneous ─────────────────────────────────────────────────────────
-*.pem
-*.key
-*.crt
-*.p12
-*.pfx
-
-# ── Vendor ─────────────────────────────────────────────────────────
+# ── Vendor ────────────────────────────────────────────────────────────────
+# vendor/ is excluded from VCS — run `make tidy` or `go mod vendor` to restore.
 vendor/

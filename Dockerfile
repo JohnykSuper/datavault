@@ -2,13 +2,14 @@ FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
 
-# Копируем только необходимое для сборки
+# Download dependencies first (separate layer — cached unless go.mod/go.sum change)
 COPY go.mod go.sum ./
-COPY vendor/ vendor/
+RUN go mod download
+
 COPY cmd/ cmd/
 COPY internal/ internal/
 
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o /datavault ./cmd/datavault
+RUN CGO_ENABLED=0 GOOS=linux go build -o /datavault ./cmd/datavault
 
 # ── Production image ──────────────────────────────────────────────────────
 FROM alpine:3.19 AS production

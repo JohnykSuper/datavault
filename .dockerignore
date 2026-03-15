@@ -4,4 +4,10 @@ bin/
 *.exe
 *.test
 *.out
-vendor/.cache
+# vendor/ is not used in Docker builds (go mod download fetches deps)
+vendor/
+deploy/
+docker/
+.github/
+*.md
+Makefile

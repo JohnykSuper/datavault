@@ -10,19 +10,27 @@ cmd/datavault/main.go          ← entry point, DI wiring
 internal/
   config/        ← env-var config (Config struct, no hardcoded values)
   logger/        ← structured zap wrapper (never log DEK/plaintext/HMAC key)
+  version/       ← version.Version string, set via ldflags at build time
   crypto/        ← AES-256-GCM (aes_gcm.go), HMAC-SHA256 search tokens (search_token.go), Zeroize (zeroize.go)
   domain/
     model/       ← Record, KeyVersion, AuditEvent
-    port/        ← HSM, DEKCache, RecordRepository, AuditRepository interfaces
+    port/        ← hsm.go (HSM crypto interface), hsm_monitor.go (HSMMonitor telemetry interface),
+                   repository.go (RecordRepository, AuditRepository, Pinger),
+                   dek_cache.go (DEKCache interface)
     service/     ← ALL business logic (encrypt, decrypt, search, rewrap, audit)
-  hsm/           ← stub.go (dev, DATAVAULT_HSM_MODE=stub) + pkcs11.go (TODO: production, DATAVAULT_HSM_MODE=pkcs11)
+  hsm/
+    hsm.go           ← factory: hsm.New() → FullClient (port.HSM + port.HSMMonitor)
+    stub.go          ← dev-only in-process HSM (DATAVAULT_HSM_MODE=stub)
+    certex_rest.go   ← CERTEX HSM ES REST adapter (DATAVAULT_HSM_MODE=certex)
+    pkcs11.go        ← TODO: production PKCS#11 adapter (DATAVAULT_HSM_MODE=pkcs11)
+  health/        ← Collector: unified /health snapshot (service + runtime + DB + HSM telemetry)
   cache/         ← in-memory DEK cache with TTL + on-evict Zeroize
   repository/
     postgres/    ← pgx v5, $1 placeholders
     mssql/       ← go-mssqldb, @p1 placeholders, OFFSET/FETCH syntax
     oracle/      ← go-ora (pure Go), :1 placeholders, OFFSET ROWS FETCH syntax
   api/
-    handler/     ← thin HTTP handlers — delegate immediately to service.*
+    handler/     ← thin HTTP handlers — delegate immediately to service.* or health.Collector
     middleware/  ← StructuredLogger, APIKeyAuth
     router.go    ← chi router wiring
 deploy/
@@ -68,8 +76,12 @@ Database connection pool (all drivers, see `.env.example` for defaults):
 `DATAVAULT_DB_MAX_CONNS`, `DATAVAULT_DB_MIN_CONNS`, `DATAVAULT_DB_CONN_MAX_LIFETIME`,  
 `DATAVAULT_DB_CONN_MAX_IDLE_TIME`, `DATAVAULT_DB_HEALTH_CHECK_PERIOD` (pgx only).
 
+CERTEX HSM ES REST adapter (required when `DATAVAULT_HSM_MODE=certex`):  
+`DATAVAULT_HSM_URL` (e.g. `https://10.0.0.1:8443`), `DATAVAULT_HSM_USER`, `DATAVAULT_HSM_PASS` — never log these values.
+
 ### Production Safety
-`DATAVAULT_HSM_MODE=stub` is **fatal** when `DATAVAULT_ENV=prod`. There is no silent fallback to stub mode.
+`DATAVAULT_HSM_MODE=stub` is **fatal** when `DATAVAULT_ENV=prod`. There is no silent fallback to stub mode.  
+Valid production modes: `certex` (CERTEX HSM ES REST) and `pkcs11` (PKCS#11, not yet implemented).
 
 ## Cryptographic Specification
 
@@ -137,8 +149,9 @@ Rename to `DV_*` names is a pending task (requires migration `002_rename_tables`
 | POST | `/v1/decrypt` | `handler.Decrypt` |
 | GET | `/v1/search` | `handler.Search` |
 | POST | `/v1/rewrap-dek` | `handler.Rewrap` |
-| GET | `/health` | liveness probe |
-| GET | `/ready` | readiness probe (DB ping) |
+| GET | `/health` | unified health probe: liveness + readiness + full telemetry |
+
+**There is no separate `/ready` endpoint.** `GET /health` returns `200 ok` when all components (DB + HSM) are healthy and `503 error` when any component is unavailable. It always includes full telemetry: runtime metrics, memory stats, DB latency, HSM node counters, battery, NTP status, DEK cache state.
 
 All `/v1/*` routes require `Authorization: Bearer <DATAVAULT_API_KEY>`.  
 Decrypt accepts a JSON body `{"tenantId":"...","recordId":"..."}` (POST, not GET).
@@ -168,26 +181,22 @@ Never store the plaintext search value. Derive: `crypto.HMACSha256Token(cfg.HMAC
 
 ### HSM Integration Point
 
-DataVault must support HSM integration through an abstract interface. Do not hardcode PKCS#11 as the only production path.
+DataVault supports HSM integration through two complementary interfaces:
 
-For CERTEX HSM ES, the currently verified integration surface from the available vendor document is an HTTPS REST API with:
-- Basic HTTP authorization
-- JSON request/response format
-- HTTP POST requests
+- **`port.HSM`** — cryptographic operations: `WrapDEK`, `UnwrapDEK`, `CurrentKeyVersion`, `Ping`
+- **`port.HSMMonitor`** — operational telemetry: `NodeInfo`, `ClusterInfo`, `LogCount`, `Date`, `Battery`, `NTPStatus`, `ActiveKeys`
+
+`hsm.FullClient` embeds both interfaces. `hsm.New(cfg)` always returns a `FullClient`. All adapters (`Stub`, `CertexREST`) implement both.
+
+For CERTEX HSM ES, the currently verified integration surface from the available vendor document is an HTTPS REST API with Basic HTTP authorization, JSON request/response format, and POST requests.
 
 Do not assume PKCS#11, `C_WrapKey`, `C_UnwrapKey`, `CKM_AES_KEY_WRAP`, or any cryptographic key-wrap endpoint unless a separate verified vendor document explicitly confirms them.
 
-Implement HSM adapters as separate production-capable integrations:
+Implement HSM adapters as separate files:
 
-- `internal/hsm/stub.go` — local development only
-- `internal/hsm/certex_rest.go` — CERTEX HSM ES REST adapter for verified monitoring/service endpoints
-- `internal/hsm/pkcs11.go` — optional adapter, only if PKCS#11 support is separately confirmed
-- `internal/hsm/vendor_sdk.go` — optional adapter, only if vendor SDK is separately confirmed
-
-The HSM interface must be split into capability-oriented interfaces, for example:
-- `HSMHealthClient`
-- `HSMCryptoClient`
-- `HSMKeyLookupClient`
+- `internal/hsm/stub.go` — local development only (`DATAVAULT_HSM_MODE=stub`)
+- `internal/hsm/certex_rest.go` — CERTEX HSM ES REST adapter (`DATAVAULT_HSM_MODE=certex`); monitoring fully implemented; crypto ops return `not implemented` pending vendor docs
+- `internal/hsm/pkcs11.go` — TODO: production PKCS#11 adapter (`DATAVAULT_HSM_MODE=pkcs11`)
 
 If a capability is not confirmed by vendor documentation, do not invent methods or fake production implementations.
 
@@ -258,60 +267,202 @@ Therefore:
 - do not implement DEK wrap/unwrap through guessed REST endpoints
 - keep cryptographic HSM operations behind an interface until the vendor provides verified crypto operation documentation
 
-### Readiness and HSM Monitoring Rules
+### Health Endpoint and HSM Monitoring
 
-For CERTEX HSM ES deployments, `/ready` may include:
-- REST connectivity check to HSM
-- successful Basic Auth validation
-- `POST /info` node status check
-- optional `POST /battery` check
-- optional `POST /date` check
-- optional `POST /infocluster` cluster visibility check
+`GET /health` is the single unified probe. It performs all checks on every call with a 5-second context timeout.
 
-Recommended health mapping:
-- `/health` => application liveness only
-- `/ready` => DB readiness + HSM connectivity + HSM node status
+Response structure:
+```json
+{
+  "status": "ok | error",
+  "version": "...",
+  "time": "RFC3339",
+  "uptime": "3h14m5s",
+  "service":  { "env", "hsm_mode", "db_driver", "hostname" },
+  "runtime":  { "go_version", "goroutines", "cpus" },
+  "memory":   { "alloc_mb", "total_alloc_mb", "sys_mb", "heap_alloc_mb", "heap_sys_mb", "gc_cycles" },
+  "components": {
+    "db":  { "status", "driver", "latency_ms", "detail" },
+    "hsm": {
+      "status", "mode", "latency_ms",
+      "node":       { all FKeyXxx counters, id, key_count, tasks_queue, tasks_queue_net },
+      "sync":       { sync_process, sync_time_ms, percent_sync_key, ... },
+      "cluster":    [ { id, key_count }, ... ],
+      "log_count":  { db_total, deleted, active, in_memory },
+      "battery":    { need_replace, voltage_millivolts },
+      "node_time":  "HSM local time string",
+      "ntp_status": "200 OK | 506 Cannot talk to daemon | stub",
+      "active_keys": [],
+      "errors":     [ "non-fatal telemetry errors" ]
+    },
+    "dek_cache": { "status", "items", "ttl" }
+  }
+}
+```
 
-Expose vendor-derived operational metrics where possible:
-- HSM node id
-- key count
-- tasksQueue
-- tasksQueueNet
-- FKeyGenTotal / FKeyGenError / FKeyGenTime
-- FKeySignTotal / FKeySignError / FKeySignTime
-- syncProcess
-- syncTime
-- battery voltage
-- need_replace
+`status` at the top level is `"ok"` only when `db.status == "ok"` AND `hsm.status == "ok"`. HSM telemetry collection errors (battery, date, etc.) populate `hsm.errors[]` and do **not** set `hsm.status = "error"`.
+
+The `health.Collector` is constructed in `main.go` and passed to the router:
+```go
+collector := health.New(cfg, repos.Pinger, hsmClient, dekCache)
+```
+`hsmClient` satisfies `port.HSMMonitor` because it is an `hsm.FullClient`.
 
 ### CERTEX REST Adapter Rules
 
-If implementing `internal/hsm/certex_rest.go`:
+`internal/hsm/certex_rest.go` implements `hsm.FullClient` (`port.HSM` + `port.HSMMonitor`).
 
-- use HTTPS only
-- use Basic HTTP authorization
-- use POST requests for documented endpoints
-- use explicit request timeout
-- never log Authorization header or credentials
-- parse vendor JSON responses into typed DTOs
-- map vendor response fields into internal health/metrics models
-- keep all vendor-specific DTOs inside the HSM adapter package
-- do not leak vendor field names into domain service logic unless deliberately normalized
+Adapter rules:
+- Use HTTPS only
+- Use Basic HTTP authorization (`req.SetBasicAuth(username, password)`) — never log credentials
+- Use POST for all vendor endpoints; default client timeout 10s
+- Parse vendor JSON responses into private DTOs (struct names prefixed `certex`)
+- Map vendor field names (`FKeyGenTotal`, `tasksQueue`, etc.) into port types before returning
+- Keep all vendor-specific DTOs inside the `hsm` package — do not leak them into `domain/` or `health/`
 
-Suggested internal methods for the REST adapter:
-- `Ping(ctx context.Context) error`
-- `NodeInfo(ctx context.Context) (NodeInfo, error)`
-- `ClusterInfo(ctx context.Context) ([]ClusterNodeInfo, error)`
-- `LogInfo(ctx context.Context) (LogInfo, error)`
-- `LogCount(ctx context.Context) (LogCountInfo, error)`
-- `Battery(ctx context.Context) (BatteryInfo, error)`
-- `Date(ctx context.Context) (time.Time, error)`
-- `UpdateTime(ctx context.Context) error`
-- `FindKey(ctx context.Context, name string) (KeyLookupResult, error)`
+Implemented `port.HSMMonitor` methods (all match actual signatures):
+```go
+Ping(ctx context.Context) error
+NodeInfo(ctx context.Context) (port.HSMNodeInfo, port.HSMSyncInfo, error)   // POST /info
+ClusterInfo(ctx context.Context) ([]port.HSMClusterNode, error)              // POST /infocluster
+LogCount(ctx context.Context) (port.HSMLogCount, error)                      // POST /logcount
+Date(ctx context.Context) (string, error)                                    // POST /date  (returns raw vendor string)
+Battery(ctx context.Context) (port.HSMBattery, error)                        // POST /battery
+NTPStatus(ctx context.Context) (string, error)                               // POST /updatetime
+ActiveKeys(ctx context.Context) ([]string, error)                            // POST /infogen
+```
 
-Do not add:
-- `WrapDEK`
-- `UnwrapDEK`
-- `GenerateKEK`
-- `GenerateDEK`
-unless these operations are explicitly documented by the vendor.
+`port.HSM` crypto methods (`WrapDEK`, `UnwrapDEK`, `CurrentKeyVersion`) return `not implemented` error pending verified vendor crypto documentation. Do not fabricate these.
+
+Verified vendor endpoints NOT yet wired into a port method (available if needed):
+- `POST /infolog` — counts state-log records (db + in-memory)
+- `POST /findkey/{name}` — key lookup by name
+- `POST /clear` — clear statistics counters
+
+### Cryptographic Policy (GOST 34.12-2015 Mandatory)
+
+DataVault production builds targeting regulated environments must use GOST 34.12-2015 (Kuznyechik) as the primary symmetric algorithm.
+
+AES must not be used in production builds when GOST mode is enabled.
+
+Cryptographic requirements:
+
+- Symmetric cipher: GOST 34.12-2015 (Kuznyechik)
+- Key size: 256 bits
+- Mode: authenticated mode only
+- Integrity: mandatory authentication tag
+- Hash function: GOST 34.11-2012 (Streebog)
+- Signature (if used): GOST 34.10-2012/2015
+
+### HSM Integration Rules (PKCS#11 + GOST)
+
+For CERTEX HSM production integration:
+
+- Use PKCS#11 interface only.
+- KEK must be generated inside HSM.
+- KEK must be non-extractable.
+- KEK must allow wrap/unwrap operations.
+- DEK must never be extractable outside the secure boundary.
+
+Use GOST-compatible mechanisms exposed by HSM, for example:
+- CKM_GOST28147_KEY_WRAP (if supported)
+- CKM_GOST28147_KEY_WRAP_PAD (if supported)
+- Vendor-defined GOST wrap mechanisms
+
+Do not assume AES-based wrap mechanisms in GOST mode.
+
+If a PKCS#11 mechanism is not confirmed by vendor documentation, do not implement it.
+
+### Envelope Encryption Model (GOST Mode)
+
+In GOST mode:
+
+1. Generate DEK using HSM or secure RNG compliant with GOST.
+2. Encrypt payload locally using GOST 34.12-2015 in authenticated mode.
+3. Wrap DEK using HSM KEK.
+4. Store:
+   - ciphertext
+   - wrapped DEK
+   - nonce/IV
+   - authentication tag
+   - algorithm identifier
+
+HSM must not be used for bulk payload encryption.
+HSM must only protect KEK and perform key wrap/unwrap.
+
+### Algorithm Selection Rules
+
+DataVault must support algorithm selection via configuration.
+
+Example:
+
+DATAVAULT_CRYPTO_MODE=gost
+
+Supported values:
+- gost
+- aes (development only unless explicitly approved)
+
+If DATAVAULT_CRYPTO_MODE=gost:
+- All symmetric encryption must use GOST 34.12-2015.
+- All hashing must use GOST 34.11-2012.
+- All key wrapping must use GOST-compatible mechanisms.
+
+Do not silently fallback from GOST to AES.
+Fail fast if GOST mechanisms are unavailable.
+
+### Coding Rules for GOST
+
+- Do not implement GOST cipher manually.
+- Use only:
+  - HSM cryptographic primitives, or
+  - vetted and approved cryptographic libraries.
+
+- Never reimplement Kuznyechik.
+- Never reimplement Streebog.
+- Never mix AES and GOST in the same encrypted dataset.
+- Store algorithm identifier with each encrypted record.
+
+Each encrypted record must include:
+- alg
+- key_version
+- iv
+- tag
+- wrapped_dek
+
+### Database Schema Requirements (GOST Mode)
+
+DV_SECURE_DATA must include:
+
+- ALG               (e.g. "GOST_34_12_2015")
+- KEY_VERSION
+- DATA_ENC
+- DEK_WRAPPED
+- NONCE
+- AUTH_TAG
+
+Algorithm must be stored explicitly to support future migration.
+
+### Security Requirements (Regulated Environment)
+
+In GOST production mode:
+
+- All cryptographic operations must comply with ST RK 1073-2007 requirements.
+- HSM must be certified at required security level.
+- KEK must be generated inside HSM.
+- KEK must not be exportable.
+- M-of-N split control should be supported for master key management.
+
+No mock HSM allowed in production.
+No software-only KEK allowed in production.
+
+### Error Handling Rules
+
+If:
+- GOST mechanism is unavailable,
+- HSM does not support required wrap mechanism,
+- HSM session cannot be established,
+
+The service must fail startup.
+
+Do not silently downgrade to AES.
+Do not automatically switch to mock mode.

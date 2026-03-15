@@ -51,7 +51,7 @@ func main() {
 		log.Fatal("failed to init key validator", "error", err)
 	}
 
-	router := api.NewRouter(svc, log, repos.Pinger, keyValidator)
+	router := api.NewRouter(svc, log, repos.Pinger, hsmClient, keyValidator)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.HTTPPort),

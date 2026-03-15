@@ -6,29 +6,78 @@ import (
 	"time"
 
 	"github.com/your-org/datavault/internal/domain/port"
+	"github.com/your-org/datavault/internal/version"
 )
 
-// Health handles GET /health — always returns 200 (liveness probe).
+type componentStatus struct {
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type healthResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+	Time    string `json:"time"`
+}
+
+type readyResponse struct {
+	Status     string                     `json:"status"`
+	Version    string                     `json:"version"`
+	Time       string                     `json:"time"`
+	Components map[string]componentStatus `json:"components"`
+}
+
+// Health handles GET /health — liveness probe.
+// Always returns 200. Reports version and server time.
 func Health() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		writeJSON(w, http.StatusOK, healthResponse{
+			Status:  "ok",
+			Version: version.Version,
+			Time:    time.Now().UTC().Format(time.RFC3339),
+		})
 	}
 }
 
 // Ready handles GET /ready — readiness probe.
-// Returns 503 if the database cannot be reached within 3 seconds.
-func Ready(pinger port.Pinger) http.HandlerFunc {
+// Checks database and HSM connectivity.
+// Returns 503 if any component is unavailable.
+func Ready(dbPinger port.Pinger, hsmPinger port.Pinger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		if err := pinger.Ping(ctx); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"status": "unavailable",
-				"detail": "database unreachable",
-			})
-			return
+		components := make(map[string]componentStatus, 2)
+		allOK := true
+
+		// Database check
+		if err := dbPinger.Ping(ctx); err != nil {
+			components["db"] = componentStatus{Status: "error", Detail: "unreachable"}
+			allOK = false
+		} else {
+			components["db"] = componentStatus{Status: "ok"}
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+
+		// HSM check
+		if err := hsmPinger.Ping(ctx); err != nil {
+			components["hsm"] = componentStatus{Status: "error", Detail: "unreachable"}
+			allOK = false
+		} else {
+			components["hsm"] = componentStatus{Status: "ok"}
+		}
+
+		status := "ready"
+		code := http.StatusOK
+		if !allOK {
+			status = "unavailable"
+			code = http.StatusServiceUnavailable
+		}
+
+		writeJSON(w, code, readyResponse{
+			Status:     status,
+			Version:    version.Version,
+			Time:       time.Now().UTC().Format(time.RFC3339),
+			Components: components,
+		})
 	}
 }

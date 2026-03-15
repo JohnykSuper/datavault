@@ -67,6 +67,56 @@ All app variables use the `DATAVAULT_` prefix per naming convention:
 ### Production Safety
 `DATAVAULT_HSM_MODE=stub` is **fatal** when `DATAVAULT_ENV=prod`. There is no silent fallback to stub mode.
 
+## Cryptographic Specification
+
+| Parameter | Value |
+|-----------|-------|
+| Payload cipher | AES-256-GCM |
+| Nonce | 12 bytes, random per record |
+| Auth tag | 16 bytes |
+| AAD | mandatory on every encrypt/decrypt call |
+| DEK wrap | RFC 3394 AES Key Wrap (stub) / `CKM_AES_KEY_WRAP` (PKCS#11) |
+| Search token | HMAC-SHA256, hex-encoded, derived from `DATAVAULT_SEARCH_KEY` |
+
+No custom crypto. Use only Go standard library primitives (`crypto/aes`, `crypto/hmac`, `crypto/sha256`).
+
+## Database Schema
+
+### Required columns — main records table (`records` → target: `DV_SECURE_DATA`)
+
+| Column | Postgres | MSSQL | Oracle |
+|--------|----------|-------|--------|
+| `id` | `UUID PRIMARY KEY` | `UNIQUEIDENTIFIER` | `VARCHAR2(36)` |
+| `entity_type` | `VARCHAR` | `NVARCHAR` | `VARCHAR2` |
+| `entity_id` | `VARCHAR` | `NVARCHAR` | `VARCHAR2` |
+| `data_enc` | `BYTEA` | `VARBINARY(MAX)` | `BLOB` |
+| `dek_wrapped` | `BYTEA` | `VARBINARY(MAX)` | `RAW(256)` |
+| `nonce` | `BYTEA` | `VARBINARY(12)` | `RAW(12)` |
+| `auth_tag` | `BYTEA` | `VARBINARY(16)` | `RAW(16)` |
+| `alg` | `VARCHAR` | `NVARCHAR` | `VARCHAR2` |
+| `kek_id` | `VARCHAR` | `NVARCHAR` | `VARCHAR2` |
+| `key_version` | `INTEGER` | `INT` | `NUMBER` |
+| `created_at` | `TIMESTAMPTZ` | `DATETIME2` | `TIMESTAMP WITH TIME ZONE` |
+| `updated_at` | `TIMESTAMPTZ` | `DATETIME2` | `TIMESTAMP WITH TIME ZONE` |
+
+### Search token table (`search_tokens` → target: `DV_SEARCH_TOKEN`)
+`id`, `record_id` (FK), `field_name`, `token` (hex HMAC)
+
+### Audit table (`audit_log` → target: `DV_AUDIT_LOG`)
+`id`, `operation`, `entity_type`, `entity_id`, `result`, `error_code`, `duration_ms`, `created_at`
+
+**Note:** current migrations use the legacy names (`records`, `search_tokens`, `audit_log`).  
+Rename to `DV_*` names is a pending task (requires migration `002_rename_tables`).
+
+## Database Type Reference
+
+| Feature | Postgres | MSSQL | Oracle |
+|---------|----------|-------|--------|
+| Binary blob | `BYTEA` | `VARBINARY(MAX)` | `BLOB` / `RAW` |
+| Timestamp | `TIMESTAMPTZ` | `DATETIME2` | `SYSTIMESTAMP` |
+| Auto-return new ID | `RETURNING id` | `OUTPUT INSERTED.id` | sequence + `:id` OUT |
+| Placeholder | `$1` | `@p1` | `:1` |
+
 ## Key Conventions
 
 ### API Endpoints
@@ -112,6 +162,25 @@ Never store the plaintext search value. Derive: `crypto.HMACSha256Token(cfg.HMAC
 - Use `log.Info/Error/Warn/Debug("message", "key", value, ...)` (key-value pairs)  
 - **Never** log: `DEK`, `plaintext`, `HMACKey`, `wrappedDEK`, passwords, or API keys  
 - Audit failures must be logged but must NOT fail the parent request  
+
+## Coding Rules
+- Do not mix SQL dialects or placeholders across drivers  
+- Do not log sensitive data (DEK, plaintext, search key, API key, passwords)  
+- Do not use mock/stub HSM in production (`DATAVAULT_ENV=prod` blocks it at startup)  
+- Prefer explicit SQL over ORM  
+- Keep port interfaces minimal and focused  
+- Write unit tests for all crypto primitives  
+- Use Go standard library where possible; minimise external dependencies  
+- Use context timeouts on all DB and HSM calls  
+- Service must remain stateless — no in-process mutable state except the DEK cache  
+
+## Non-Functional Requirements
+- Stateless service; horizontally scalable  
+- Structured logging (zap, key-value pairs)  
+- Context propagation and timeouts throughout  
+- No secret leakage via logs, errors, or HTTP responses  
+- In-memory DEK cache with TTL and on-evict zeroization  
+- All config via environment variables — no hardcoded values  
 
 ## Adding a New Database Driver
 1. Create `internal/repository/<driver>/record_repo.go` + `audit_repo.go`  

@@ -34,3 +34,9 @@ func (p *PKCS11) UnwrapDEK(_ context.Context, _ string, _ int, _ []byte) ([]byte
 	// TODO: C_UnwrapKey with CKM_AES_KEY_WRAP
 	return nil, fmt.Errorf("PKCS11: not implemented")
 }
+
+// Ping implements port.HSM.
+// TODO: verify HSM connectivity via C_GetSlotInfo or a test session open.
+func (p *PKCS11) Ping(_ context.Context) error {
+	return fmt.Errorf("PKCS11: not implemented")
+}

@@ -83,6 +83,9 @@ func (s *Stub) UnwrapDEK(_ context.Context, tenantID string, keyVersion int, wra
 	return aesUnwrap(kek, wrappedDEK)
 }
 
+// Ping implements port.HSM — the stub is always healthy (in-process).
+func (s *Stub) Ping(_ context.Context) error { return nil }
+
 func (s *Stub) getKEK(tenantID string, keyVersion int) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

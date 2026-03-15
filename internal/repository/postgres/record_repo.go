@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/your-org/datavault/internal/config"
@@ -14,10 +15,27 @@ import (
 )
 
 // New opens a pgx connection pool and returns record + audit repositories.
+//
+// Pool settings:
+//   - MinConns=2, MaxConns=20 (prevents thundering herd on cold start)
+//   - MaxConnLifetime=30min (recycles long-lived connections, handles silent drops)
+//   - MaxConnIdleTime=5min (releases idle capacity quickly)
+//   - HealthCheckPeriod=1min (proactively pings idle connections; bad ones are dropped
+//     and replaced automatically — this is the primary reconnect mechanism)
 func New(cfg *config.Config) (port.RecordRepository, port.AuditRepository, error) {
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pgxpool.New: %w", err)
+		return nil, nil, fmt.Errorf("pgxpool.ParseConfig: %w", err)
+	}
+	poolCfg.MinConns = 2
+	poolCfg.MaxConns = 20
+	poolCfg.MaxConnLifetime = 30 * time.Minute
+	poolCfg.MaxConnIdleTime = 5 * time.Minute
+	poolCfg.HealthCheckPeriod = 1 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pgxpool.NewWithConfig: %w", err)
 	}
 	if err := pool.Ping(context.Background()); err != nil {
 		return nil, nil, fmt.Errorf("postgres ping: %w", err)

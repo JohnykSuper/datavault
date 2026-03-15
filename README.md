@@ -125,8 +125,18 @@ Configured via environment variables:
 - Event streaming
 - Vault integration
 
+---
+
 ## License
 
 DataVault is licensed under the Apache License 2.0.
 
 See the LICENSE file for details.
+
+---
+
+## Disclaimer
+
+DataVault is provided for educational and engineering purposes.
+It is not a certified security product.
+Users are responsible for evaluating security suitability for their environment.

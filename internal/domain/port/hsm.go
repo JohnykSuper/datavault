@@ -16,4 +16,8 @@ type HSM interface {
 
 	// CurrentKeyVersion returns the active key version for a tenant.
 	CurrentKeyVersion(ctx context.Context, tenantID string) (int, error)
+
+	// Ping verifies that the HSM is reachable and operational.
+	// Used by the readiness probe.
+	Ping(ctx context.Context) error
 }

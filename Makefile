@@ -4,9 +4,11 @@
 BINARY=bin/datavault
 MAIN=./cmd/datavault
 COMPOSE=docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.override.yml --env-file .env
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS=-ldflags "-X github.com/your-org/datavault/internal/version.Version=$(VERSION)"
 
 build:
-	go build -mod=vendor -o $(BINARY) $(MAIN)
+	go build -mod=vendor $(LDFLAGS) -o $(BINARY) $(MAIN)
 
 test:
 	go test ./... -v -count=1

@@ -49,6 +49,8 @@ func (h *mockHSM) UnwrapDEK(_ context.Context, _ string, _ int, wrapped []byte) 
 	return out, nil
 }
 
+func (h *mockHSM) Ping(_ context.Context) error { return nil }
+
 // mockCache is an unbounded in-memory DEK cache with no TTL.
 type mockCache struct {
 	mu    sync.RWMutex

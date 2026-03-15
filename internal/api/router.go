@@ -14,7 +14,7 @@ import (
 )
 
 // NewRouter builds and returns the fully-configured chi router.
-func NewRouter(svc *service.Service, log *logger.Logger, pinger port.Pinger, keyValidator port.KeyValidator) http.Handler {
+func NewRouter(svc *service.Service, log *logger.Logger, dbPinger port.Pinger, hsmPinger port.Pinger, keyValidator port.KeyValidator) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -25,7 +25,7 @@ func NewRouter(svc *service.Service, log *logger.Logger, pinger port.Pinger, key
 
 	// Health / readiness (no auth required)
 	r.Get("/health", handler.Health())
-	r.Get("/ready", handler.Ready(pinger))
+	r.Get("/ready", handler.Ready(dbPinger, hsmPinger))
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {

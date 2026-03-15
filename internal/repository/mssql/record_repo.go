@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "github.com/microsoft/go-mssqldb"
 	"github.com/your-org/datavault/internal/config"
@@ -15,6 +16,11 @@ import (
 )
 
 // New opens a sql.DB pool for MSSQL and returns record + audit repositories.
+//
+// Pool settings mirror those of the Postgres adapter.
+// database/sql automatically retries with a fresh connection on "bad connection"
+// errors, so explicit reconnect logic is not needed — correct pool sizing
+// and connection lifetime rotation are sufficient.
 func New(cfg *config.Config) (port.RecordRepository, port.AuditRepository, error) {
 	dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s",
 		cfg.MSSQLUser, cfg.MSSQLPass, cfg.MSSQLHost, cfg.MSSQLPort, cfg.MSSQLDB)
@@ -22,6 +28,10 @@ func New(cfg *config.Config) (port.RecordRepository, port.AuditRepository, error
 	if err != nil {
 		return nil, nil, err
 	}
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 	if err := db.PingContext(context.Background()); err != nil {
 		return nil, nil, fmt.Errorf("mssql ping: %w", err)
 	}

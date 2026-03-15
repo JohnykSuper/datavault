@@ -6,6 +6,9 @@ import (
 	"crypto/rand"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/your-org/datavault/internal/domain/port"
 )
 
 // Stub is a software-only HSM implementation for development and testing.
@@ -83,8 +86,57 @@ func (s *Stub) UnwrapDEK(_ context.Context, tenantID string, keyVersion int, wra
 	return aesUnwrap(kek, wrappedDEK)
 }
 
-// Ping implements port.HSM — the stub is always healthy (in-process).
+// Ping implements port.HSMMonitor — the stub is always healthy (in-process).
 func (s *Stub) Ping(_ context.Context) error { return nil }
+
+// ── port.HSMMonitor — in-process stub implementations ────────────────────────
+
+// NodeInfo returns zero-value counters. The stub does not perform real HSM ops.
+func (s *Stub) NodeInfo(_ context.Context) (port.HSMNodeInfo, port.HSMSyncInfo, error) {
+	s.mu.RLock()
+	totalKeys := int64(0)
+	for _, versions := range s.keks {
+		totalKeys += int64(len(versions))
+	}
+	s.mu.RUnlock()
+	return port.HSMNodeInfo{ID: 0, KeyCount: totalKeys}, port.HSMSyncInfo{}, nil
+}
+
+// ClusterInfo returns a single-node cluster entry representing this stub.
+func (s *Stub) ClusterInfo(_ context.Context) ([]port.HSMClusterNode, error) {
+	s.mu.RLock()
+	totalKeys := int64(0)
+	for _, versions := range s.keks {
+		totalKeys += int64(len(versions))
+	}
+	s.mu.RUnlock()
+	return []port.HSMClusterNode{{ID: 0, KeyCount: totalKeys}}, nil
+}
+
+// LogCount returns zeros — the stub has no persistent log storage.
+func (s *Stub) LogCount(_ context.Context) (port.HSMLogCount, error) {
+	return port.HSMLogCount{}, nil
+}
+
+// Date returns the current UTC time formatted as the CERTEX HSM ES date string.
+func (s *Stub) Date(_ context.Context) (string, error) {
+	return time.Now().UTC().Format("Mon Jan 02 15:04:05 +0000 2006"), nil
+}
+
+// Battery returns a healthy stub battery state with zero voltage.
+func (s *Stub) Battery(_ context.Context) (port.HSMBattery, error) {
+	return port.HSMBattery{NeedReplace: false, VoltageMillivolts: 0}, nil
+}
+
+// NTPStatus always returns the stub indicator — NTP is not applicable in-process.
+func (s *Stub) NTPStatus(_ context.Context) (string, error) {
+	return "stub - not applicable", nil
+}
+
+// ActiveKeys returns an empty slice — the stub processes all operations synchronously.
+func (s *Stub) ActiveKeys(_ context.Context) ([]string, error) {
+	return []string{}, nil
+}
 
 func (s *Stub) getKEK(tenantID string, keyVersion int) ([]byte, error) {
 	s.mu.RLock()

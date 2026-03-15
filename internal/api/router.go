@@ -24,9 +24,8 @@ func NewRouter(svc *service.Service, log *logger.Logger, collector *health.Colle
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.StructuredLogger(log))
 
-	// Health / readiness (no auth required)
+	// Health — unified probe (no auth required)
 	r.Get("/health", handler.Health(collector))
-	r.Get("/ready", handler.Ready(collector))
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {

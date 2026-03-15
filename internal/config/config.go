@@ -36,7 +36,10 @@ type Config struct {
 	OraclePass string
 
 	// HSM
-	HSMMode string // stub | pkcs11
+	HSMMode    string // stub | certex | pkcs11
+	HSMBaseURL string // DATAVAULT_HSM_URL — base URL for certex REST adapter
+	HSMUser    string // DATAVAULT_HSM_USER — Basic-auth username (never log)
+	HSMPass    string // DATAVAULT_HSM_PASS — Basic-auth password (never log)
 
 	// HMAC search key — never log
 	HMACKey []byte
@@ -97,6 +100,9 @@ func Load() *Config {
 		OracleUser:          os.Getenv("DATAVAULT_ORACLE_USER"),
 		OraclePass:          os.Getenv("DATAVAULT_ORACLE_PASS"),
 		HSMMode:             getEnvOrDefault("DATAVAULT_HSM_MODE", "stub"),
+		HSMBaseURL:          os.Getenv("DATAVAULT_HSM_URL"),
+		HSMUser:             os.Getenv("DATAVAULT_HSM_USER"),
+		HSMPass:             os.Getenv("DATAVAULT_HSM_PASS"),
 		HMACKey:             searchKey,
 		DEKCacheTTL:         ttl,
 		DBMaxConns:          dbMaxConns,

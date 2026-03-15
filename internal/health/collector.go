@@ -1,5 +1,5 @@
 // Package health collects service, runtime, and infrastructure status
-// for the /health and /ready HTTP probes.
+// for the unified GET /health endpoint.
 package health
 
 import (
@@ -19,7 +19,7 @@ type CacheStatser interface {
 	CacheTTL() time.Duration
 }
 
-// ── Response types ───────────────────────────────────────────────────────────
+// ── Response types ────────────────────────────────────────────────────────────
 
 // ServiceInfo describes the static service configuration.
 type ServiceInfo struct {
@@ -36,7 +36,7 @@ type RuntimeInfo struct {
 	CPUs       int    `json:"cpus"`
 }
 
-// MemoryInfo holds Go memory statistics.
+// MemoryInfo holds Go heap and GC statistics (values in megabytes).
 type MemoryInfo struct {
 	AllocMB      float64 `json:"alloc_mb"`
 	TotalAllocMB float64 `json:"total_alloc_mb"`
@@ -46,104 +46,95 @@ type MemoryInfo struct {
 	GCCycles     uint32  `json:"gc_cycles"`
 }
 
-// ComponentStatus is the health status of an external dependency.
-type ComponentStatus struct {
+// DBStatus is the health status of the database.
+type DBStatus struct {
 	Status    string `json:"status"`
+	Driver    string `json:"driver"`
 	Detail    string `json:"detail,omitempty"`
 	LatencyMs int64  `json:"latency_ms,omitempty"`
 }
 
-// CacheInfo is the health status of the in-process DEK cache.
-type CacheInfo struct {
+// HSMStatus is the complete health and telemetry snapshot of the HSM.
+type HSMStatus struct {
+	Status     string                `json:"status"`
+	Mode       string                `json:"mode"`
+	Detail     string                `json:"detail,omitempty"`
+	LatencyMs  int64                 `json:"latency_ms,omitempty"`
+	Node       *port.HSMNodeInfo     `json:"node,omitempty"`
+	Sync       *port.HSMSyncInfo     `json:"sync,omitempty"`
+	Cluster    []port.HSMClusterNode `json:"cluster,omitempty"`
+	LogCount   *port.HSMLogCount     `json:"log_count,omitempty"`
+	Battery    *port.HSMBattery      `json:"battery,omitempty"`
+	NodeTime   string                `json:"node_time,omitempty"`
+	NTPStatus  string                `json:"ntp_status,omitempty"`
+	ActiveKeys []string              `json:"active_keys"`
+	Errors     []string              `json:"errors,omitempty"`
+}
+
+// CacheStatus is the health status of the in-process DEK cache.
+type CacheStatus struct {
 	Status string `json:"status"`
 	Items  int    `json:"items"`
 	TTL    string `json:"ttl"`
 }
 
-// ReadyComponents groups all component statuses.
-type ReadyComponents struct {
-	DB       ComponentStatus `json:"db"`
-	HSM      ComponentStatus `json:"hsm"`
-	DEKCache CacheInfo       `json:"dek_cache"`
+// Components groups all infrastructure component statuses.
+type Components struct {
+	DB       DBStatus    `json:"db"`
+	HSM      HSMStatus   `json:"hsm"`
+	DEKCache CacheStatus `json:"dek_cache"`
 }
 
-// HealthResponse is the wire format for GET /health (liveness only).
+// HealthResponse is the unified wire format for GET /health.
+// Status is "ok" only when every component reports healthy.
 type HealthResponse struct {
-	Status  string      `json:"status"`
-	Version string      `json:"version"`
-	Time    string      `json:"time"`
-	Uptime  string      `json:"uptime"`
-	Service ServiceInfo `json:"service"`
-	Runtime RuntimeInfo `json:"runtime"`
-	Memory  MemoryInfo  `json:"memory"`
+	Status     string      `json:"status"`
+	Version    string      `json:"version"`
+	Time       string      `json:"time"`
+	Uptime     string      `json:"uptime"`
+	Service    ServiceInfo `json:"service"`
+	Runtime    RuntimeInfo `json:"runtime"`
+	Memory     MemoryInfo  `json:"memory"`
+	Components Components  `json:"components"`
 }
 
-// ReadyResponse is the wire format for GET /ready (readiness, incl. probes).
-type ReadyResponse struct {
-	Status     string          `json:"status"`
-	Version    string          `json:"version"`
-	Time       string          `json:"time"`
-	Uptime     string          `json:"uptime"`
-	Service    ServiceInfo     `json:"service"`
-	Runtime    RuntimeInfo     `json:"runtime"`
-	Memory     MemoryInfo      `json:"memory"`
-	Components ReadyComponents `json:"components"`
-}
+// ── Collector ─────────────────────────────────────────────────────────────────
 
-// ── Collector ────────────────────────────────────────────────────────────────
-
-// Collector assembles health and readiness snapshots.
+// Collector assembles the comprehensive health snapshot.
 type Collector struct {
 	startTime time.Time
 	dbPinger  port.Pinger
-	hsmPinger port.Pinger
+	hsm       port.HSMMonitor
 	cache     CacheStatser
 	cfg       *config.Config
 }
 
-// New creates a Collector. It records the current time as the service start time.
-func New(cfg *config.Config, dbPinger port.Pinger, hsmPinger port.Pinger, cache CacheStatser) *Collector {
+// New creates a Collector. It records time.Now() as the service start time.
+func New(cfg *config.Config, dbPinger port.Pinger, hsm port.HSMMonitor, cache CacheStatser) *Collector {
 	return &Collector{
 		startTime: time.Now(),
 		dbPinger:  dbPinger,
-		hsmPinger: hsmPinger,
+		hsm:       hsm,
 		cache:     cache,
 		cfg:       cfg,
 	}
 }
 
-// Health returns a liveness snapshot without making any external calls.
-func (c *Collector) Health() HealthResponse {
-	return HealthResponse{
-		Status:  "ok",
-		Version: version.Version,
-		Time:    nowRFC3339(),
-		Uptime:  uptime(c.startTime),
-		Service: c.serviceInfo(),
-		Runtime: collectRuntime(),
-		Memory:  collectMemory(),
-	}
-}
+// Check performs all health checks and returns a snapshot.
+// The second return value is true when every component is healthy.
+// A 5-second context deadline is strongly recommended by the caller.
+func (c *Collector) Check(ctx context.Context) (HealthResponse, bool) {
+	db := c.checkDB(ctx)
+	hsm := c.checkHSM(ctx)
+	cache := c.checkCache()
 
-// Ready runs DB and HSM ping checks and returns a readiness snapshot.
-// The second return value is true when every component reports "ok".
-func (c *Collector) Ready(ctx context.Context) (ReadyResponse, bool) {
-	dbStatus := c.probe(ctx, c.dbPinger)
-	hsmStatus := c.probe(ctx, c.hsmPinger)
-
-	cacheInfo := CacheInfo{
-		Status: "ok",
-		Items:  c.cache.ItemCount(),
-		TTL:    c.cache.CacheTTL().String(),
-	}
-
-	allOK := dbStatus.Status == "ok" && hsmStatus.Status == "ok"
-	status := "ready"
+	allOK := db.Status == "ok" && hsm.Status == "ok"
+	status := "ok"
 	if !allOK {
-		status = "unavailable"
+		status = "error"
 	}
 
-	return ReadyResponse{
+	return HealthResponse{
 		Status:  status,
 		Version: version.Version,
 		Time:    nowRFC3339(),
@@ -151,23 +142,116 @@ func (c *Collector) Ready(ctx context.Context) (ReadyResponse, bool) {
 		Service: c.serviceInfo(),
 		Runtime: collectRuntime(),
 		Memory:  collectMemory(),
-		Components: ReadyComponents{
-			DB:       dbStatus,
-			HSM:      hsmStatus,
-			DEKCache: cacheInfo,
+		Components: Components{
+			DB:       db,
+			HSM:      hsm,
+			DEKCache: cache,
 		},
 	}, allOK
 }
 
-// ── internal helpers ─────────────────────────────────────────────────────────
+// ── component checks ──────────────────────────────────────────────────────────
 
-func (c *Collector) probe(ctx context.Context, p port.Pinger) ComponentStatus {
+func (c *Collector) checkDB(ctx context.Context) DBStatus {
 	t0 := time.Now()
-	if err := p.Ping(ctx); err != nil {
-		return ComponentStatus{Status: "error", Detail: err.Error()}
+	if err := c.dbPinger.Ping(ctx); err != nil {
+		return DBStatus{Status: "error", Driver: c.cfg.DBDriver, Detail: err.Error()}
 	}
-	return ComponentStatus{Status: "ok", LatencyMs: time.Since(t0).Milliseconds()}
+	return DBStatus{
+		Status:    "ok",
+		Driver:    c.cfg.DBDriver,
+		LatencyMs: time.Since(t0).Milliseconds(),
+	}
 }
+
+func (c *Collector) checkHSM(ctx context.Context) HSMStatus {
+	// ── 1. Connectivity check ──────────────────────────────────────────────
+	t0 := time.Now()
+	if err := c.hsm.Ping(ctx); err != nil {
+		return HSMStatus{
+			Status:     "error",
+			Mode:       c.cfg.HSMMode,
+			Detail:     err.Error(),
+			ActiveKeys: []string{},
+		}
+	}
+	latency := time.Since(t0).Milliseconds()
+
+	// ── 2. Collect detailed telemetry (failures are non-fatal) ────────────
+	var errs []string
+
+	node, sync, err := c.hsm.NodeInfo(ctx)
+	var nodePtr *port.HSMNodeInfo
+	var syncPtr *port.HSMSyncInfo
+	if err != nil {
+		errs = append(errs, "node_info: "+err.Error())
+	} else {
+		nodePtr = &node
+		syncPtr = &sync
+	}
+
+	cluster, err := c.hsm.ClusterInfo(ctx)
+	if err != nil {
+		errs = append(errs, "cluster_info: "+err.Error())
+	}
+
+	logCount, err := c.hsm.LogCount(ctx)
+	var logCountPtr *port.HSMLogCount
+	if err != nil {
+		errs = append(errs, "log_count: "+err.Error())
+	} else {
+		logCountPtr = &logCount
+	}
+
+	battery, err := c.hsm.Battery(ctx)
+	var batteryPtr *port.HSMBattery
+	if err != nil {
+		errs = append(errs, "battery: "+err.Error())
+	} else {
+		batteryPtr = &battery
+	}
+
+	nodeTime, err := c.hsm.Date(ctx)
+	if err != nil {
+		errs = append(errs, "date: "+err.Error())
+	}
+
+	ntpStatus, err := c.hsm.NTPStatus(ctx)
+	if err != nil {
+		errs = append(errs, "ntp_status: "+err.Error())
+	}
+
+	activeKeys, err := c.hsm.ActiveKeys(ctx)
+	if err != nil {
+		errs = append(errs, "active_keys: "+err.Error())
+		activeKeys = []string{}
+	}
+
+	return HSMStatus{
+		Status:     "ok",
+		Mode:       c.cfg.HSMMode,
+		LatencyMs:  latency,
+		Node:       nodePtr,
+		Sync:       syncPtr,
+		Cluster:    cluster,
+		LogCount:   logCountPtr,
+		Battery:    batteryPtr,
+		NodeTime:   nodeTime,
+		NTPStatus:  ntpStatus,
+		ActiveKeys: activeKeys,
+		Errors:     errs,
+	}
+}
+
+func (c *Collector) checkCache() CacheStatus {
+	return CacheStatus{
+		Status: "ok",
+		Items:  c.cache.ItemCount(),
+		TTL:    c.cache.CacheTTL().String(),
+	}
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 func (c *Collector) serviceInfo() ServiceInfo {
 	hostname, _ := os.Hostname()
@@ -200,14 +284,8 @@ func collectMemory() MemoryInfo {
 	}
 }
 
-func nowRFC3339() string {
-	return time.Now().UTC().Format(time.RFC3339)
-}
+func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 
-func uptime(start time.Time) string {
-	return time.Since(start).Truncate(time.Second).String()
-}
+func uptime(start time.Time) string { return time.Since(start).Truncate(time.Second).String() }
 
-func toMB(b uint64) float64 {
-	return float64(b) / 1024 / 1024
-}
+func toMB(b uint64) float64 { return float64(b) / 1024 / 1024 }

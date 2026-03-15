@@ -52,6 +52,7 @@ func main() {
 		log.Fatal("failed to init key validator", "error", err)
 	}
 
+	// hsmClient satisfies both port.HSM (used by svc) and port.HSMMonitor (used by health).
 	collector := health.New(cfg, repos.Pinger, hsmClient, dekCache)
 
 	router := api.NewRouter(svc, log, collector, keyValidator)
